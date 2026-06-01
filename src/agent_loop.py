@@ -18,7 +18,11 @@ from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner
+from src.tool_security import (
+    blocked_tools_for_owner,
+    owner_is_admin_or_single_user,
+    profile_blocks_mcp,
+)
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -1251,8 +1255,9 @@ async def stream_agent_loop(
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
         disabled_tools.update(public_blocked_tools)
+    if profile_blocks_mcp() or not owner_is_admin_or_single_user(owner):
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
-        # public/non-admin users rather than trying to enumerate every tool.
+        # private-profile/public users rather than trying to enumerate every tool.
         mcp_mgr = None
 
     _t0 = time.time()

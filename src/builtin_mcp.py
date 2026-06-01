@@ -101,7 +101,18 @@ async def register_builtin_servers(mcp_manager):
             continue
         asyncio.create_task(_connect_python_server(server_id, script_path, name))
 
-    # Register NPX-based servers in the background (they take longer to start)
+    # Register NPX-based servers in the background (they take longer to start).
+    # Browser automation can interact with logged-in pages and local services,
+    # so capability profiles keep it opt-in unless full_admin is selected.
+    try:
+        from src.tool_security import browser_mcp_enabled
+        _browser_enabled = browser_mcp_enabled()
+    except Exception:
+        _browser_enabled = False
+    if not _browser_enabled:
+        logger.info("Built-in Browser MCP disabled by capability profile/settings")
+        return
+
     npx_path = _find_npx()
     logger.info(f"NPX binary resolved to: {npx_path}")
 

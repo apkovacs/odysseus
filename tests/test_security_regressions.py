@@ -382,3 +382,110 @@ def test_mcp_config_listing_is_admin_gated():
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
+
+
+def test_compose_binds_app_to_loopback_by_default():
+    compose = (Path(__file__).resolve().parent.parent / "docker-compose.yml").read_text()
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+
+
+def test_workspace_profile_blocks_generic_high_risk_tools(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "workspace")
+    from src.tool_security import profile_blocked_tools
+
+    blocked = profile_blocked_tools()
+
+    assert "app_api" in blocked
+    assert "api_call" in blocked
+    assert "manage_mcp" in blocked
+    assert "bash" not in blocked
+
+
+def test_private_profile_blocks_local_and_web_tools(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "private")
+    from src.tool_security import profile_blocked_tools, profile_blocks_mcp
+
+    blocked = profile_blocked_tools()
+
+    assert {"bash", "python", "read_file", "write_file", "web_search"} <= blocked
+    assert profile_blocks_mcp() is True
+
+
+def test_safe_tool_env_strips_secret_like_variables(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("NORMAL_VAR", "value")
+    monkeypatch.delenv("ODYSSEUS_TOOL_ENV_ALLOW", raising=False)
+
+    from src.tool_security import safe_tool_env
+
+    env = safe_tool_env()
+
+    assert "OPENAI_API_KEY" not in env
+    assert "NORMAL_VAR" not in env
+    assert "PATH" in env
+
+
+def test_safe_tool_env_allows_explicit_secret_passthrough(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ODYSSEUS_TOOL_ENV_ALLOW", "OPENAI_API_KEY")
+
+    from src.tool_security import safe_tool_env
+
+    assert safe_tool_env()["OPENAI_API_KEY"] == "secret"
+
+
+def test_file_tool_path_must_stay_under_configured_roots(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    safe = root / "note.txt"
+    safe.write_text("hello", encoding="utf-8")
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "workspace")
+    monkeypatch.setenv("ODYSSEUS_FILE_ROOTS", str(root))
+
+    from src.tool_security import resolve_tool_path
+
+    assert resolve_tool_path("note.txt") == safe.resolve()
+    with pytest.raises(PermissionError):
+        resolve_tool_path(str(tmp_path / "outside.txt"), for_write=True)
+
+
+def test_file_tool_path_blocks_sensitive_names(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "workspace")
+    monkeypatch.setenv("ODYSSEUS_FILE_ROOTS", str(root))
+
+    from src.tool_security import resolve_tool_path
+
+    with pytest.raises(PermissionError):
+        resolve_tool_path(".env", for_write=True)
+
+
+@pytest.mark.asyncio
+async def test_disabled_local_access_blocks_python_and_file_tools(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "developer")
+    from src.agent_tools import ToolBlock
+    from src.tool_execution import execute_tool_block
+
+    disabled = {"bash", "python", "read_file", "write_file"}
+
+    for tool in ("python", "read_file", "write_file"):
+        _desc, result = await execute_tool_block(
+            ToolBlock(tool, "print('x')" if tool == "python" else "x.txt\nbody"),
+            disabled_tools=disabled,
+            owner="admin",
+        )
+        assert result["exit_code"] == 1
+        assert "disabled" in result["error"]
+
+
+def test_outbound_tool_allowlist(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_CAPABILITY_PROFILE", "developer")
+    monkeypatch.setenv("ODYSSEUS_TOOL_NET_ALLOW", "api.openai.com,*.example.com,localhost:11434")
+
+    from src.tool_security import outbound_url_allowed
+
+    assert outbound_url_allowed("https://api.openai.com/v1/models") is True
+    assert outbound_url_allowed("https://sub.example.com/path") is True
+    assert outbound_url_allowed("http://localhost:11434/v1/models") is True
+    assert outbound_url_allowed("https://evil.test/") is False

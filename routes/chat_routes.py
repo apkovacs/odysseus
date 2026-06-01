@@ -428,10 +428,12 @@ def setup_chat_routes(
         finally:
             _doc_db.close()
 
-        # Build disabled-tools set from frontend toggles + user privileges
+        # Build disabled-tools set from frontend toggles + user privileges.
+        # The UI historically called this "bash", but bash/python/read/write
+        # are one local-computer access class from a data-leak perspective.
         disabled_tools = set()
         if str(allow_bash).lower() != "true":
-            disabled_tools.add("bash")
+            disabled_tools.update({"bash", "python", "read_file", "write_file"})
         if str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
 

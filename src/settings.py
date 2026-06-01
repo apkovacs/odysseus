@@ -29,6 +29,17 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    # Capability profile controls how much local-machine access the agent can
+    # use by default. Env var ODYSSEUS_CAPABILITY_PROFILE overrides this.
+    # private: no local tools / no browser MCP / no arbitrary network tools
+    # workspace: local tools only when explicitly toggled, file roots enforced
+    # developer: local tools allowed with sandbox/env hygiene
+    # full_admin: legacy high-trust behavior
+    "capability_profile": "workspace",
+    "file_roots": ["./data/workspace"],
+    "tool_env_allow": [],
+    "tool_net_allow": [],
+    "browser_mcp_enabled": False,
     "image_gen_enabled": True,
     "image_model": "",
     "image_quality": "medium",

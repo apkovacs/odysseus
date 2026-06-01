@@ -306,20 +306,10 @@ async def _direct_fallback(
     """
     import json as _json
 
-    # Inherit env + force a sane terminal so subprocesses that touch
-    # terminfo (anything calling `clear`, `tput`, `os.system("clear")`,
-    # or scripts that probe $TERM) don't spam "TERM environment variable
-    # not set" errors. The agent's bash/python tool calls run with PIPE
-    # stdin/stdout (no real TTY), so curses/termios still won't work —
-    # but at least non-interactive code with incidental TERM lookups
-    # stops failing. COLUMNS/LINES give terminal-width-aware tools (less,
-    # rich, etc.) reasonable defaults instead of 0×0.
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-    }
+    from src.tool_security import resolve_tool_path, safe_tool_env, tool_cwd
+
+    _subproc_env = safe_tool_env()
+    _tool_cwd = tool_cwd()
 
     try:
         if tool == "bash":
@@ -328,6 +318,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_tool_cwd,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -352,6 +343,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_tool_cwd,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -372,15 +364,18 @@ async def _direct_fallback(
             if not path:
                 return {"error": "read_file: path required", "exit_code": 1}
             try:
+                safe_path = resolve_tool_path(path, for_write=False)
                 # Run blocking read in a thread to keep the loop responsive
                 def _read():
-                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
                         return f.read(MAX_READ_CHARS + 1)
                 data = await asyncio.to_thread(_read)
             except FileNotFoundError:
                 return {"error": f"read_file: {path}: not found", "exit_code": 1}
             except PermissionError:
                 return {"error": f"read_file: {path}: permission denied", "exit_code": 1}
+            except ValueError as e:
+                return {"error": f"read_file: {e}", "exit_code": 1}
             except OSError as e:
                 return {"error": f"read_file: {path}: {e}", "exit_code": 1}
             truncated = len(data) > MAX_READ_CHARS
@@ -395,20 +390,23 @@ async def _direct_fallback(
             if not path:
                 return {"error": "write_file: path required", "exit_code": 1}
             try:
+                safe_path = resolve_tool_path(path, for_write=True)
                 def _write():
                     import os
-                    d = os.path.dirname(path)
+                    d = os.path.dirname(safe_path)
                     if d:
                         os.makedirs(d, exist_ok=True)
-                    with open(path, "w", encoding="utf-8") as f:
+                    with open(safe_path, "w", encoding="utf-8") as f:
                         f.write(body)
                     return len(body)
                 size = await asyncio.to_thread(_write)
             except PermissionError:
                 return {"error": f"write_file: {path}: permission denied", "exit_code": 1}
+            except ValueError as e:
+                return {"error": f"write_file: {e}", "exit_code": 1}
             except OSError as e:
                 return {"error": f"write_file: {path}: {e}", "exit_code": 1}
-            return {"output": f"Wrote {size} bytes to {path}", "exit_code": 0}
+            return {"output": f"Wrote {size} bytes to {safe_path}", "exit_code": 0}
 
         if tool == "web_search":
             from src.search import comprehensive_web_search

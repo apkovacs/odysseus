@@ -289,6 +289,12 @@ async def execute_api_call(
 
     url = base_url + path
     method = method.upper()
+    try:
+        from src.tool_security import outbound_url_allowed
+        if not outbound_url_allowed(url):
+            return {"error": f"Outbound tool request blocked by network allowlist: {url}", "exit_code": 1}
+    except Exception:
+        pass
 
     # Build headers
     headers: Dict[str, str] = {}

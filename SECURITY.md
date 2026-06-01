@@ -19,6 +19,34 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
 
+## Preventing Local Data Leaks
+
+Use the default `ODYSSEUS_CAPABILITY_PROFILE=workspace` for normal local use.
+It keeps generic admin/API loopback tools and Browser MCP off by default,
+confines file tools to configured roots, and requires local-computer access to
+be explicitly enabled for shell/Python/file operations.
+
+For stricter deployments, set:
+
+```env
+ODYSSEUS_CAPABILITY_PROFILE=private
+APP_BIND=127.0.0.1
+LOCALHOST_BYPASS=false
+AUTH_ENABLED=true
+```
+
+To intentionally restore functionality:
+
+- LAN/reverse-proxy access: set `APP_BIND=0.0.0.0` only behind HTTPS/VPN/reverse proxy.
+- Agent access to a repo: set `ODYSSEUS_FILE_ROOTS=/path/to/repo,/path/to/workspace`.
+- Secret/env access in shell/Python tools: set `ODYSSEUS_TOOL_ENV_ALLOW=NAME1,NAME2`.
+- Browser automation: set `ODYSSEUS_ENABLE_BROWSER_MCP=true`.
+- Legacy high-trust behavior: set `ODYSSEUS_CAPABILITY_PROFILE=full_admin`.
+
+Application-level controls reduce accidental leaks, but shell/Python child
+process egress must be contained with Docker/host firewall rules if your threat
+model requires hard network isolation.
+
 ## Publishing A Fork
 
 Before pushing a public fork, run:

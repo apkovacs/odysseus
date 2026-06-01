@@ -119,6 +119,32 @@ app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 
+
+def _enforce_safe_first_run_bind():
+    """Fail closed if first-run setup is knowingly exposed off-loopback."""
+    if auth_manager.is_configured:
+        return
+    bind = (
+        os.getenv("APP_BIND")
+        or os.getenv("ODYSSEUS_BIND_HOST")
+        or ""
+    ).strip().lower()
+    if not bind:
+        return
+    if bind in ("127.0.0.1", "localhost", "::1"):
+        return
+    if os.getenv("ODYSSEUS_ALLOW_REMOTE_FIRST_RUN", "false").lower() in ("1", "true", "yes", "on"):
+        logger.warning("Remote first-run setup allowed by ODYSSEUS_ALLOW_REMOTE_FIRST_RUN")
+        return
+    raise RuntimeError(
+        "Refusing first-run setup on non-loopback APP_BIND. "
+        "Set APP_BIND=127.0.0.1, create the admin account locally, or set "
+        "ODYSSEUS_ALLOW_REMOTE_FIRST_RUN=true if you intentionally accept the risk."
+    )
+
+
+_enforce_safe_first_run_bind()
+
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
         "/api/auth/setup",

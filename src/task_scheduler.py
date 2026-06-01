@@ -12,6 +12,28 @@ from typing import Any, Awaitable, Callable, Dict, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _scheduled_task_disabled_tools(task=None, crew=None) -> set:
+    """Default scheduled agents away from local-computer access.
+
+    Background tasks run when the user is not watching, so shell/file/browser
+    surfaces require an explicit per-crew enabled_tools list or full_admin mode.
+    """
+    from src.tool_security import LOCAL_COMPUTER_TOOLS, profile_blocked_tools, capability_profile
+
+    disabled = set(profile_blocked_tools())
+    if capability_profile() != "full_admin":
+        disabled.update(LOCAL_COMPUTER_TOOLS)
+        disabled.update({"app_api", "api_call", "builtin_browser"})
+    if crew and getattr(crew, "enabled_tools", None):
+        try:
+            enabled = set(json.loads(crew.enabled_tools) or [])
+            if enabled:
+                disabled -= enabled
+        except Exception:
+            pass
+    return disabled
+
+
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
 # Multiple scheduled tasks firing in the same minute often need the same
 # external data (Miniflux unreads, MCP tool snapshots, etc.). This cache
@@ -1119,7 +1141,8 @@ class TaskScheduler:
         return await self._run_agent_loop(
             endpoint_url, model, task, session_id,
             system_prompt=(crew.personality or "").strip() if crew else None,
-            disabled_tools=None, relevant_tools=None,
+            disabled_tools=_scheduled_task_disabled_tools(task, crew),
+            relevant_tools=None,
             override_user_message=context,
         )
 
@@ -1200,14 +1223,15 @@ class TaskScheduler:
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
         # Compute tool filter from CrewMember.enabled_tools if set
-        disabled_tools = None
+        disabled_tools = _scheduled_task_disabled_tools(task, crew)
         if crew and crew.enabled_tools:
             try:
                 enabled = json.loads(crew.enabled_tools)
                 if isinstance(enabled, list) and enabled:
                     from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
-                    disabled_tools = all_tools - set(enabled)
+                    disabled_tools.update(all_tools - set(enabled))
+                    disabled_tools -= set(enabled)
             except Exception:
                 pass
 

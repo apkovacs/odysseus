@@ -58,6 +58,9 @@ Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
 If port `7000` is already taken, set `APP_PORT=7001` (or another free port)
 in `.env`, recreate the container, and open `http://localhost:7001`.
+The web UI binds to `127.0.0.1` by default. To intentionally expose it to
+your LAN/VPN/reverse proxy, set `APP_BIND=0.0.0.0` (or a specific Tailscale/LAN
+IP) in `.env` after first-run setup is complete.
 
 Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
@@ -125,7 +128,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py            # creates data dirs and prints an initial admin password
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+APP_BIND=127.0.0.1 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
 ### Option 3: Manual install — Windows (PowerShell)
@@ -139,7 +142,8 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+$env:APP_BIND="127.0.0.1"
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
 Open `http://localhost:7000`, log in with the generated admin password,
@@ -157,6 +161,43 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - If you enable API tokens or webhooks, create separate tokens per integration and delete unused ones.
 - Prefer binding manual development runs to `127.0.0.1`; bind to `0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
+
+### Capability profiles
+Odysseus has powerful agent tools. The default profile is `workspace`: generic
+admin loopback/API tools and Browser MCP are off, local file tools are confined
+to configured roots, and shell/Python/file access only comes online when local
+computer access is explicitly enabled.
+
+Set `ODYSSEUS_CAPABILITY_PROFILE` in `.env`:
+
+| Profile | Use when | Effect |
+|---|---|---|
+| `private` | Maximum leak prevention | Blocks shell/Python/file tools, web/research tools, Browser MCP, arbitrary API/app loopback, and MCP schemas. |
+| `workspace` | Default local work | Local tools are explicit and file-rooted; high-risk admin/generic tools stay off. |
+| `developer` | Trusted coding workstation | Local tools are available with sanitized environment and file-root checks. |
+| `full_admin` | Legacy high-trust behavior | Restores broad admin agent behavior, including unrestricted file paths and Browser MCP by default. |
+
+Common opt-ins:
+
+```env
+# Let the agent read/write a repo or workspace outside ./data/workspace
+ODYSSEUS_FILE_ROOTS=/home/me/projects/app,/home/me/Documents/agent-workspace
+
+# Pass selected secrets into bash/python tools. Secret-like env vars are
+# stripped unless named here.
+ODYSSEUS_TOOL_ENV_ALLOW=GITHUB_TOKEN,HF_TOKEN
+
+# Enable browser automation MCP outside full_admin.
+ODYSSEUS_ENABLE_BROWSER_MCP=true
+
+# Restore legacy broad-power behavior.
+ODYSSEUS_CAPABILITY_PROFILE=full_admin
+```
+
+For stronger egress control, pair the `private`/`workspace` profiles with Docker
+or host firewall rules that restrict outbound traffic from the container. App
+settings can limit Odysseus-managed HTTP tools, but child processes can only be
+fully contained by the operating system/container network policy.
 
 ### Putting it behind HTTPS
 Odysseus serves plain HTTP on its port. That's fine for `localhost` and trusted LAN/VPN use, but browsers will warn ("Password fields present on an insecure page") and the login + API tokens travel in cleartext. For anything reachable outside your machine — including a Tailscale IP shared with other devices — put a TLS-terminating reverse proxy in front.
@@ -190,6 +231,12 @@ Key settings:
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
+| `APP_BIND` | `127.0.0.1` | Host bind address for Docker Compose UI port. Use `0.0.0.0` only intentionally. |
+| `ODYSSEUS_CAPABILITY_PROFILE` | `workspace` | Agent capability profile: `private`, `workspace`, `developer`, or `full_admin`. |
+| `ODYSSEUS_FILE_ROOTS` | `./data/workspace` | Comma-separated roots for agent file tools outside `full_admin`. |
+| `ODYSSEUS_TOOL_ENV_ALLOW` | -- | Comma-separated env vars to pass into bash/Python tools. |
+| `ODYSSEUS_ENABLE_BROWSER_MCP` | `false` | Enable built-in Browser MCP outside `full_admin`. |
+| `ODYSSEUS_ALLOW_REMOTE_FIRST_RUN` | `false` | Allow first-run setup while knowingly bound off-loopback. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
